@@ -11,9 +11,11 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
+use embassy_rp::gpio;
 use embassy_time::{Duration, Ticker};
 use panic_probe as _;
 use smart_leds::RGB8;
+use gpio::{Level, Output};
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
@@ -44,14 +46,16 @@ async fn main(_spawner: Spawner) {
 
     // This is the number of leds in the string. Helpfully, the sparkfun thing plus and adafruit
     // feather boards for the 2040 both have one built in.
-    const NUM_LEDS: usize = 1;
+    const NUM_LEDS: usize = 60;
     let mut data = [RGB8::default(); NUM_LEDS];
+    let mut pwr = Output::new(p.PIN_26, Level::Low);
 
     // Common neopixel pins:
     // Thing plus: 8
     // Adafruit Feather: 16;  Adafruit Feather+RFM95: 4
+    // NeoPixel controller Pico Zero board: 22 (active-low enable on 26)
     let program = PioWs2812Program::new(&mut common);
-    let mut ws2812 = PioWs2812::new(&mut common, sm0, p.PIN_16, p.DMA_CH0, Irqs, &program);
+    let mut ws2812 = PioWs2812::new(&mut common, sm0, p.PIN_22, p.DMA_CH0, Irqs, &program);
 
     // Loop forever making RGB values and pushing them out to the WS2812.
     let mut ticker = Ticker::every(Duration::from_millis(10));
