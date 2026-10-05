@@ -22,19 +22,44 @@ bind_interrupts!(struct Irqs {
     DMA_IRQ_0 => embassy_rp::dma::InterruptHandler<DMA_CH0>;
 });
 
-/// Input a value 0 to 255 to get a color value
-/// The colours are a transition r - g - b - back to r.
-fn wheel(mut wheel_pos: u8) -> RGB8 {
-    wheel_pos = 255 - wheel_pos;
-    if wheel_pos < 85 {
-        return (255 - wheel_pos * 3, 0, wheel_pos * 3).into();
+const GAMMA: f32 = 2.2;
+const BRIGHTNESS: f32 = 0.5;
+
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+    // calculate r, g, b weightings from hue
+    let r =       (h * 6.0 - 3.0).abs() - 1.0;
+    let g = 2.0 - (h * 6.0 - 2.0).abs();
+    let b = 2.0 - (h * 6.0 - 4.0).abs();
+    // clamp the weightings to the normalised range (0-1)
+    let r = r.clamp(0.0, 1.0);
+    let g = g.clamp(0.0, 1.0);
+    let b = b.clamp(0.0, 1.0);
+    // apply saturation and luminance to the colour mix
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let r = (r - 0.5) * c + l;
+    let g = (g - 0.5) * c + l;
+    let b = (b - 0.5) * c + l;
+    (r, g, b)
+}
+
+fn gamma(encoded: (f32, f32, f32)) -> RGB8 {
+    let brightness: f32 = 255.0*libm::powf(BRIGHTNESS, GAMMA); // global brightness setting, range 0.0 - 255.0
+    RGB8::new(libm::ceilf(libm::powf(encoded.0, GAMMA)*brightness) as u8,
+        libm::ceilf(libm::powf(encoded.1, GAMMA)*brightness) as u8,
+        libm::ceilf(libm::powf(encoded.2, GAMMA)*brightness) as u8)
+}
+
+fn shader_hsl5(x: usize, y: usize) -> impl FnMut(usize) -> (f32, f32, f32) {
+    let offset = 0.5;
+    let x = x;
+    let _y = y;
+    
+    move|time| {
+        // hue oscillates from 0 to 1 and back over the course of 12 seconds
+        let hue = ((time + x) % 60) as f32 / 60.0; // 0.0 to 1.0
+        hsl_to_rgb(hue, 1.0, offset/4.0)
     }
-    if wheel_pos < 170 {
-        wheel_pos -= 85;
-        return (0, wheel_pos * 3, 255 - wheel_pos * 3).into();
-    }
-    wheel_pos -= 170;
-    (wheel_pos * 3, 255 - wheel_pos * 3, 0).into()
 }
 
 #[embassy_executor::main(executor = "embassy_rp::executor::Executor", entry = "cortex_m_rt::entry")]
@@ -48,7 +73,7 @@ async fn main(_spawner: Spawner) {
     // feather boards for the 2040 both have one built in.
     const NUM_LEDS: usize = 60;
     let mut data = [RGB8::default(); NUM_LEDS];
-    let mut pwr = Output::new(p.PIN_26, Level::Low);
+    let mut _pwr = Output::new(p.PIN_26, Level::Low);
 
     // Common neopixel pins:
     // Thing plus: 8
@@ -57,18 +82,20 @@ async fn main(_spawner: Spawner) {
     let program = PioWs2812Program::new(&mut common);
     let mut ws2812 = PioWs2812::new(&mut common, sm0, p.PIN_22, p.DMA_CH0, Irqs, &program);
 
+    let mut shaders: [_; NUM_LEDS] = core::array::from_fn(|i| shader_hsl5(i, 0));
+
     // Loop forever making RGB values and pushing them out to the WS2812.
     let mut ticker = Ticker::every(Duration::from_millis(10));
+    let mut time = 0;
     loop {
-        for j in 0..(256 * 5) {
-            debug!("New Colors:");
-            for i in 0..NUM_LEDS {
-                data[i] = wheel((((i * 256) as u16 / NUM_LEDS as u16 + j as u16) & 255) as u8);
-                debug!("R: {} G: {} B: {}", data[i].r, data[i].g, data[i].b);
-            }
-            ws2812.write_slice(&data).await;
-
-            ticker.next().await;
+        debug!("New Colors:");
+        for i in 0..NUM_LEDS {
+            data[i] = gamma(shaders[i](time));
+            debug!("R: {} G: {} B: {}", data[i].r, data[i].g, data[i].b);
         }
+        ws2812.write_slice(&data).await;
+
+        ticker.next().await;
+        time += 1;
     }
 }

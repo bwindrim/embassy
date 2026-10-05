@@ -60,6 +60,7 @@ portable-atomic = { version = "1.5", features = ["critical-section"] }
 log = "0.4"
 rand = { version = "0.9.0", default-features = false }
 embedded-sdmmc = "0.7.0"
+libm = "0.2.16"
 
 [profile.release]
 # Enable generation of debug symbols even on release builds
