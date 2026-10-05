@@ -23,7 +23,7 @@ bind_interrupts!(struct Irqs {
 });
 
 const GAMMA: f32 = 2.2;
-const BRIGHTNESS: f32 = 0.5;
+const BRIGHTNESS: f32 = 1.0;
 
 
 fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
@@ -50,14 +50,14 @@ fn gamma(encoded: (f32, f32, f32)) -> RGB8 {
         libm::ceilf(libm::powf(encoded.2, GAMMA)*brightness) as u8)
 }
 
-fn shader_hsl5(x: usize, y: usize) -> impl FnMut(usize) -> (f32, f32, f32) {
-    let offset = 0.5;
-    let x = x;
-    let _y = y;
+fn shader_hsl5(x: usize, y: usize) -> impl FnMut(f32) -> (f32, f32, f32) {
+    let offset = 1.0;
+    let x = x as f32;
+    let _y = y as f32;
     
     move|time| {
         // hue oscillates from 0 to 1 and back over the course of 12 seconds
-        let hue = ((time + x) % 60) as f32 / 60.0; // 0.0 to 1.0
+        let hue = ((time + x) % 60.0)/ 60.0; // 0.0 to 1.0
         hsl_to_rgb(hue, 1.0, offset/4.0)
     }
 }
@@ -71,9 +71,9 @@ async fn main(_spawner: Spawner) {
 
     // This is the number of leds in the string. Helpfully, the sparkfun thing plus and adafruit
     // feather boards for the 2040 both have one built in.
-    const NUM_LEDS: usize = 60;
-    let mut data = [RGB8::default(); NUM_LEDS];
-    let mut _pwr = Output::new(p.PIN_26, Level::Low);
+    const NUM_LEDS: usize = 60; // 60 LEDs in the string. Change this to match your setup.
+    let mut data = [RGB8::default(); NUM_LEDS]; // This is the array of RGB values to send to the WS2812.
+    let mut _pwr = Output::new(p.PIN_26, Level::Low); // Power on the NeoPixel controller Pico Zero board. Not needed for other boards.
 
     // Common neopixel pins:
     // Thing plus: 8
@@ -82,20 +82,21 @@ async fn main(_spawner: Spawner) {
     let program = PioWs2812Program::new(&mut common);
     let mut ws2812 = PioWs2812::new(&mut common, sm0, p.PIN_22, p.DMA_CH0, Irqs, &program);
 
+    // Create an array of shader functions, one for each LED. Each shader function takes a time value and returns an RGB value.
     let mut shaders: [_; NUM_LEDS] = core::array::from_fn(|i| shader_hsl5(i, 0));
 
     // Loop forever making RGB values and pushing them out to the WS2812.
     let mut ticker = Ticker::every(Duration::from_millis(10));
-    let mut time = 0;
+    let mut time: f32 = 0.0;
     loop {
-        debug!("New Colors:");
+//        debug!("New Colors:");
         for i in 0..NUM_LEDS {
             data[i] = gamma(shaders[i](time));
-            debug!("R: {} G: {} B: {}", data[i].r, data[i].g, data[i].b);
+//            debug!("R: {} G: {} B: {}", data[i].r, data[i].g, data[i].b);
         }
         ws2812.write_slice(&data).await;
 
         ticker.next().await;
-        time += 1;
+        time += 0.01; // Increment time by 10ms for the next frame
     }
 }
