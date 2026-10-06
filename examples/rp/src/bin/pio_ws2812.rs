@@ -58,19 +58,20 @@ fn shader_hsl5(x: usize, y: usize) -> impl FnMut(f32) -> (f32, f32, f32) {
     move|time| {
         // hue oscillates from 0 to 1 and back over the course of 12 seconds
         let hue = ((time + x) % 60.0)/ 60.0; // 0.0 to 1.0
-        hsl_to_rgb(hue, 1.0, offset/4.0)
+        let sat = 1.0; // full saturation
+        let lum = offset/2.0; // adjust the luminance as needed
+        hsl_to_rgb(hue, sat, lum)
     }
 }
 
 #[embassy_executor::main(executor = "embassy_rp::executor::Executor", entry = "cortex_m_rt::entry")]
 async fn main(_spawner: Spawner) {
     info!("Start");
+    // Initialize the RP2040 peripherals and PIO
     let p = embassy_rp::init(Default::default());
-
     let Pio { mut common, sm0, .. } = Pio::new(p.PIO0, Irqs);
 
-    // This is the number of leds in the string. Helpfully, the sparkfun thing plus and adafruit
-    // feather boards for the 2040 both have one built in.
+    // This is the number of leds in the string.
     const NUM_LEDS: usize = 60; // 60 LEDs in the string. Change this to match your setup.
     let mut data = [RGB8::default(); NUM_LEDS]; // This is the array of RGB values to send to the WS2812.
     let mut _pwr = Output::new(p.PIN_26, Level::Low); // Power on the NeoPixel controller Pico Zero board. Not needed for other boards.
@@ -82,12 +83,16 @@ async fn main(_spawner: Spawner) {
     let program = PioWs2812Program::new(&mut common);
     let mut ws2812 = PioWs2812::new(&mut common, sm0, p.PIN_22, p.DMA_CH0, Irqs, &program);
 
-    // Create an array of shader functions, one for each LED. Each shader function takes a time value and returns an RGB value.
+    // Create an array of shader functions, one for each LED.
+    // Each shader function takes a time value and returns an RGB value,
+    // and is parameterised by the LED's location in the array.
     let mut shaders: [_; NUM_LEDS] = core::array::from_fn(|i| shader_hsl5(i, 0));
 
-    // Loop forever making RGB values and pushing them out to the WS2812.
+    // Create a ticker to control the frame rate of the animation.
     let mut ticker = Ticker::every(Duration::from_millis(10));
-    let mut time: f32 = 0.0;
+    let mut time: f32 = 0.0; // elapsed time in seconds, used to drive the shader functions
+
+    // Loop forever making RGB values and pushing them out to the WS2812.
     loop {
 //        debug!("New Colors:");
         for i in 0..NUM_LEDS {
